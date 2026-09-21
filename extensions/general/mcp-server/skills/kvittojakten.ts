@@ -59,14 +59,23 @@ Call \`gnubok_list_companies\`. One company: use it. Several: ask the user which
 - \`search_from\` / \`search_to\`: the date window worth searching
 - \`mail_searchable: false\`: salary, tax, bank fees. Skip the search and report it under "needs a human"
 - \`portal\`: the vendor does not mail its invoices. Do not search; give the user the \`portal.url\` in the final report
+- \`tip_possible: true\`: a restaurant or bar, where the card charge is the bill plus a tip
+- \`next_step\`: the one sentence to give the user for this item when you cannot bring the document in. Report it verbatim; do not invent your own wording
 
 Tell the user in one line how many items you are taking on, then start. Do not ask for confirmation to search: that is what they clicked the button for.
 
 ### Step 3: Search mail, one item at a time
 
-Build a narrow query from the item: the counterparty (or the distinctive word in the bank descriptor), the date window, and attachments. Example: \`from:(hetzner) after:2026/03/01 before:2026/03/21 has:attachment\`. If that finds nothing, retry once without \`has:attachment\` (many receipts are the mail body itself) and once on the amount as text ("1 249,00" and "1249.00"). Then move on: three queries per item, no more.
+**First, what Accounted already holds.** Call \`gnubok_list_unmatched_documents\` once, before any mail search, and keep the list. Documents arrive here from the built-in hunt, from photos the user sent in, and from mail forwarded earlier: in the first trial run half of everything that got staged was already sitting in this list. When one matches an item on vendor, amount and date, take its \`document_id\` and go straight to step 5 for that item. An invoice may be dated weeks before the payment that settles it.
+
+Then, for the items nothing explains yet, build a narrow query from the item: the counterparty (or the distinctive word in the bank descriptor), the date window, and attachments. Example: \`from:(hetzner) after:2026/03/01 before:2026/03/21 has:attachment\`. If that finds nothing, retry once without \`has:attachment\` (many receipts are the mail body itself) and once on the amount as text ("1 249,00" and "1249.00"). Then move on: three queries per item, no more.
 
 A hit is the receipt only when the vendor matches AND the amount matches (the mail may state it in another currency: compare against \`amount\` + \`currency\`, not a converted guess) AND the date is inside the window. \`invoice_number\` matching settles it outright. Order confirmations, shipping notices, payment reminders and marketing are not underlag. When two mails fit equally well, take neither and report the item as ambiguous.
+
+Two exceptions to the amount rule:
+
+- \`tip_possible\`: the charge is the bill plus the tip, so a receipt totalling up to a quarter less than \`amount\` is still this purchase. Say the difference in the report ("dricks 40 kr"). A receipt larger than the charge is never a match.
+- Several charges from the same vendor sharing a date and amount (two seats, two tickets) are one decision, not several. Collect the candidates for all of them first. Tell them apart by receipt number or time and stage one each, or tell the user about all of them. Never stage one and leave its twin unexplained.
 
 ### Step 4: Bring the documents in
 
@@ -83,7 +92,9 @@ Both stage a pending operation and return \`staged: true\`. Nothing is linked un
 
 ### Step 6: Approval and report
 
-Hand over for approval as described in "Your harness". Then report, in the user's language, in four short groups: **found and staged** (item, document), **ambiguous** (what to choose between), **not found in mail** (with the \`portal.url\` where the worklist gave one), **needs a human** (not mail-searchable). If \`total_count\` was larger than what you worked through, say how many remain and offer another round.
+Hand over for approval as described in "Your harness". Then report, in the user's language, in four short groups: **found and staged** (item, document), **ambiguous** (what to choose between), **not found in mail**, **needs a human** (not mail-searchable).
+
+Every item you did not stage gets its \`next_step\` sentence beside it, as the worklist wrote it. That sentence is the whole point of the group: the user should be able to work down the list without deciding anything. Group items that share a next step ("tre kvitton ligger i Kivra") so the list stays short. If \`total_count\` was larger than what you worked through, say how many remain and offer another round.
 
 ## Rules
 
