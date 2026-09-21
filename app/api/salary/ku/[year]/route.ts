@@ -3,7 +3,7 @@ import { ensureInitialized } from '@/lib/init'
 import { withRouteContext } from '@/lib/api/with-route-context'
 import { generateKU10Xml } from '@/lib/salary/ku/ku10-generator'
 import type { KU10EmployeeData, KU10CompanyData } from '@/lib/salary/ku/ku10-generator'
-import { resolveTaxableBenefits } from '@/lib/salary/benefit-payments'
+import { resolveTaxableBenefits, staleBenefitTotalRefusal } from '@/lib/salary/benefit-payments'
 import { getErrorMessage as getUserErrorMessage } from '@/lib/errors/get-error-message'
 
 ensureInitialized()
@@ -51,10 +51,10 @@ export const GET = withRouteContext<{ params: Promise<{ year: string }> }>(
     const { data: runEmployees, error } = await supabase
       .from('salary_run_employees')
       .select(`
-        employee_id, gross_salary, tax_withheld, tax_withheld_override,
+        employee_id, gross_salary, benefit_values, tax_withheld, tax_withheld_override,
         avgifter_basis, avgifter_basis_override,
         employee:employees(personnummer, specification_number, employment_start, employment_end),
-        salary_run:salary_runs!inner(period_year, status),
+        salary_run:salary_runs!inner(period_year, period_month, status),
         line_items:salary_line_items(item_type, amount)
       `)
       .eq('company_id', companyId)
@@ -122,6 +122,21 @@ export const GET = withRouteContext<{ params: Promise<{ year: string }> }>(
           { status: 422 },
         )
       }
+      // A booked payslip calculated before the reduction existed stores tax
+      // and underlag for the unreduced benefit; a KU built from it would
+      // disagree with the tax actually withheld. Same rule and helper as the
+      // AGI generator: refuse, never a silently inconsistent kontrolluppgift.
+      const run = sre.salary_run as unknown as { period_year: number; period_month: number }
+      const stale = staleBenefitTotalRefusal({
+        who: `Anställd ${emp.specification_number}`,
+        periodYear: run.period_year,
+        periodMonth: run.period_month,
+        document: 'kontrolluppgiften',
+        storedBenefitValues: sre.benefit_values,
+        benefits: resolution.benefits,
+      })
+      if (stale) return NextResponse.json({ error: stale }, { status: 422 })
+
       const { reduction, reducedType } = resolution.benefits
       if (reduction > 0) {
         if (reducedType === 'benefit_car') current.benefitCar -= reduction

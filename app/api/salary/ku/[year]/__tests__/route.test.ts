@@ -43,15 +43,23 @@ const EMPLOYEE = {
   employment_end: null,
 }
 
-const payslip = (lineItems: Array<{ item_type: string; amount: number }>, status = 'booked', year = 2026) => ({
+// benefitValues is what the calculation STORED: the fixed engine stores the
+// reduced förmånsvärde, the pre-fix engine stored the whole benefit.
+const payslip = (
+  lineItems: Array<{ item_type: string; amount: number }>,
+  benefitValues: number,
+  status = 'booked',
+  year = 2026,
+) => ({
   employee_id: 'emp-1',
   gross_salary: 48000,
+  benefit_values: benefitValues,
   tax_withheld: 10050,
   tax_withheld_override: null,
   avgifter_basis: 48000,
   avgifter_basis_override: null,
   employee: EMPLOYEE,
-  salary_run: { period_year: year, status },
+  salary_run: { period_year: year, period_month: 9, status },
   line_items: lineItems,
 })
 
@@ -103,14 +111,14 @@ describe('GET /api/salary/ku/[year]', () => {
   })
 
   it('returns 404 when the year has no booked runs (drafts do not count)', async () => {
-    authed([payslip([CAR], 'draft')])
+    authed([payslip([CAR], 6664, 'draft')])
     const { status, body } = await parseJsonResponse<{ error: string }>(await call())
     expect(status).toBe(404)
     expect(body.error).toContain('Inga bokförda lönekörningar')
   })
 
   it('happy path: a car benefit with no payment is reported in full (unchanged)', async () => {
-    authed([payslip([CAR]), payslip([CAR])])
+    authed([payslip([CAR], 6664), payslip([CAR], 6664)])
     const response = await call()
     expect(response.status).toBe(200)
     expect(await response.text()).toBe('<ku10/>')
@@ -118,31 +126,60 @@ describe('GET /api/salary/ku/[year]', () => {
   })
 
   it('a fully paid benefit leaves no förmånsvärde on the kontrolluppgift', async () => {
-    authed([payslip([CAR, payment(-6664)])])
+    authed([payslip([CAR, payment(-6664)], 0)])
     await call()
     expect(aggregated().benefitCar).toBeUndefined()
   })
 
   it('the reduction is per payslip: a paid month and an unpaid month sum to the unpaid value', async () => {
-    authed([payslip([CAR, payment(-6664)]), payslip([CAR])])
+    authed([payslip([CAR, payment(-6664)], 0), payslip([CAR], 6664)])
     await call()
     expect(aggregated().benefitCar).toBe(6664)
   })
 
   it('an over-payment in one month never eats into another month (floors at 0 per payslip)', async () => {
-    authed([payslip([CAR, payment(-9000)]), payslip([CAR])])
+    authed([payslip([CAR, payment(-9000)], 0), payslip([CAR], 6664)])
     await call()
     expect(aggregated().benefitCar).toBe(6664)
   })
 
   it('partial payment: benefit minus payment', async () => {
-    authed([payslip([CAR, payment(-2000)])])
+    authed([payslip([CAR, payment(-2000)], 4664)])
     await call()
     expect(aggregated().benefitCar).toBe(4664)
   })
 
+  it('refuses a booked payslip calculated before the reduction existed: its stored tax is for the whole benefit', async () => {
+    // benefit_values 6664 = the pre-fix engine's unreduced value, next to a
+    // payment that now resolves the förmånsvärde to 0. A KU built from this
+    // would report no benefit against tax withheld on the whole benefit.
+    authed([payslip([CAR, payment(-6664)], 6664)])
+    const { status, body } = await parseJsonResponse<{ error: string }>(await call())
+    expect(status).toBe(422)
+    expect(body.error).toContain('Anställd 1, 2026-09')
+    expect(body.error).toContain('Korrigera lönekörning')
+    expect(body.error).toContain('kontrolluppgiften')
+    expect(generateKU10Xml).not.toHaveBeenCalled()
+  })
+
+  it('one stale payslip stops the whole year, even next to correctly calculated months', async () => {
+    authed([payslip([CAR, payment(-6664)], 0), payslip([CAR, payment(-6664)], 6664)])
+    const { status } = await parseJsonResponse(await call())
+    expect(status).toBe(422)
+    expect(generateKU10Xml).not.toHaveBeenCalled()
+  })
+
+  it('never trips on a payslip without a benefit payment, whatever it stored', async () => {
+    // No reduction means the KU is the historical one: a legacy row whose
+    // stored value differs for any other reason must not be refused here.
+    authed([payslip([CAR], 0)])
+    const response = await call()
+    expect(response.status).toBe(200)
+    expect(aggregated().benefitCar).toBe(6664)
+  })
+
   it('returns 422 instead of guessing when a payment sits next to several benefit types', async () => {
-    authed([payslip([CAR, { item_type: 'benefit_meals', amount: 2480 }, payment(-2480)])])
+    authed([payslip([CAR, { item_type: 'benefit_meals', amount: 2480 }, payment(-2480)], 9144)])
     const { status, body } = await parseJsonResponse<{ error: string }>(await call())
     expect(status).toBe(422)
     expect(body.error).toContain('flera förmånstyper')

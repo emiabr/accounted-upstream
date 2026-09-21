@@ -590,7 +590,11 @@ describe('generateAgiDeclaration: an employee payment for a benefit reduces the 
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.code).toBe('AGI_INCOMPLETE_DATA')
-    expect(JSON.stringify(result.details)).toContain('räkna om')
+    const message = JSON.stringify(result.details)
+    expect(message).toContain('Anställd 1, 2026-06')
+    expect(message).toContain('Räkna om lönekörningen')
+    expect(message).toContain('Korrigera lönekörning')
+    expect(message).toContain('arbetsgivardeklarationen')
   })
 
   it('refuses a payment on a payslip with several benefit types instead of guessing a field', async () => {

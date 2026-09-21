@@ -32,7 +32,12 @@ import {
 import type { AGIEmployeeData, AGICompanyData, AGITotals } from './xml-generator'
 import { agiReportingPeriod, formatAgiPeriodDashed } from './reporting-period'
 import { runDeviationWindow } from '../deviation-period'
-import { resolveTaxableBenefits, type BenefitItemType, type TaxableBenefits } from '../benefit-payments'
+import {
+  resolveTaxableBenefits,
+  staleBenefitTotalRefusal,
+  type BenefitItemType,
+  type TaxableBenefits,
+} from '../benefit-payments'
 import { eventBus } from '@/lib/events'
 import { truncateToWholeKronor } from '@/lib/money'
 import {
@@ -325,26 +330,22 @@ export async function generateAgiDeclaration(
         details: { missing_fields: ['line_items'], message: `${who}: ${resolution.error}` },
       }
     }
-    // The benefit fields come from the lines, the tax and the avgifter basis
-    // from the totals stored at calculation time. A payslip last calculated
-    // before the reduction existed stores the unreduced value, and its AGI
-    // would report a benefit that disagrees with its own underlag. Only
-    // payslips with a reduction can differ, so no historical run is touched.
-    const { reduction, taxableTotal } = resolution.benefits
-    if (
-      reduction > 0 &&
-      typeof sre.benefit_values === 'number' &&
-      Math.round(sre.benefit_values * 100) !== Math.round(taxableTotal * 100)
-    ) {
+    // A payslip calculated before the reduction existed would declare a
+    // benefit that disagrees with its own stored tax and underlag. Same rule
+    // as the KU route, one helper (staleBenefitTotalRefusal).
+    const stale = staleBenefitTotalRefusal({
+      who,
+      periodYear: run.period_year as number,
+      periodMonth: run.period_month as number,
+      document: 'arbetsgivardeklarationen',
+      storedBenefitValues: sre.benefit_values,
+      benefits: resolution.benefits,
+    })
+    if (stale) {
       return {
         ok: false,
         code: 'AGI_INCOMPLETE_DATA',
-        details: {
-          missing_fields: ['benefit_values'],
-          message:
-            `${who}: lönebeskedet har ett nettolöneavdrag för förmån men är beräknat innan förmånsvärdet sattes ned med betalningen. ` +
-            'Återställ lönekörningen till utkast, räkna om den och skapa sedan arbetsgivardeklarationen.',
-        },
+        details: { missing_fields: ['benefit_values'], message: stale },
       }
     }
     rowBenefits.push(resolution.benefits)

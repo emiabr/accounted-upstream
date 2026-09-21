@@ -7,6 +7,7 @@ import {
   doubleBenefitAdjustmentWarning,
   findDoubleBenefitAdjustments,
   resolveTaxableBenefits,
+  staleBenefitTotalRefusal,
 } from '../benefit-payments'
 import { roundOre } from '@/lib/money'
 import { getErrorMessage } from '@/lib/errors/get-error-message'
@@ -400,5 +401,57 @@ describe('the refusal reaches the user as written', () => {
     expect(shown).toBe(`${name}: ${result.error}`)
     expect(shown.length).toBeLessThanOrEqual(500)
     expect(shown).toContain('ta bort avdraget')
+  })
+})
+
+describe('staleBenefitTotalRefusal: one rule for the AGI and the KU', () => {
+  const benefitsOf = (lines: Array<{ itemType: string; amount: number }>) => {
+    const result = resolveTaxableBenefits(lines)
+    if (!result.ok) throw new Error(result.error)
+    return result.benefits
+  }
+  const paidInFull = benefitsOf([car(), payment(-CAR)])
+  const base = { who: 'Anställd 7', periodYear: 2026, periodMonth: 9 }
+
+  it('refuses when the stored förmånsvärde is the unreduced one, naming employee, period and document', () => {
+    const refusal = staleBenefitTotalRefusal({
+      ...base, document: 'kontrolluppgiften', storedBenefitValues: CAR, benefits: paidInFull,
+    })
+    expect(refusal).toContain('Anställd 7, 2026-09')
+    expect(refusal).toContain('Räkna om lönekörningen (Tillbaka till utkast)')
+    expect(refusal).toContain('korrigera den (Korrigera lönekörning)')
+    expect(refusal).toContain('innan kontrolluppgiften skapas')
+  })
+
+  it('names the other document for the AGI', () => {
+    expect(
+      staleBenefitTotalRefusal({ ...base, document: 'arbetsgivardeklarationen', storedBenefitValues: CAR, benefits: paidInFull }),
+    ).toContain('innan arbetsgivardeklarationen skapas')
+  })
+
+  it('passes a payslip the fixed engine calculated', () => {
+    expect(
+      staleBenefitTotalRefusal({ ...base, document: 'kontrolluppgiften', storedBenefitValues: 0, benefits: paidInFull }),
+    ).toBeNull()
+    expect(
+      staleBenefitTotalRefusal({
+        ...base, document: 'kontrolluppgiften', storedBenefitValues: 4664, benefits: benefitsOf([car(), payment(-2000)]),
+      }),
+    ).toBeNull()
+  })
+
+  it('never touches a payslip without a reduction, so no historical run can trip it', () => {
+    expect(
+      staleBenefitTotalRefusal({ ...base, document: 'kontrolluppgiften', storedBenefitValues: 1, benefits: benefitsOf([car()]) }),
+    ).toBeNull()
+  })
+
+  it('compares in whole öre, so float noise is not a mismatch', () => {
+    expect(
+      staleBenefitTotalRefusal({
+        ...base, document: 'kontrolluppgiften', storedBenefitValues: 0.1 + 0.2,
+        benefits: benefitsOf([car(670.47), payment(-670.17)]),
+      }),
+    ).toBeNull()
   })
 })

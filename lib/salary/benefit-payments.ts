@@ -39,6 +39,14 @@ export const BENEFIT_ITEM_TYPES = [
 
 export type BenefitItemType = (typeof BENEFIT_ITEM_TYPES)[number]
 
+// Compile-time guard: every `benefit_*` member of SalaryLineItemType must be in
+// the list above. A benefit type added to the union later (a fuel benefit, say)
+// fails the build here instead of silently escaping the reduction, the AGI and
+// the KU. It adds no type today.
+type MissingBenefitType = Exclude<Extract<SalaryLineItemType, `benefit_${string}`>, BenefitItemType>
+const _everyBenefitTypeIsListed: [MissingBenefitType] extends [never] ? true : never = true
+void _everyBenefitTypeIsListed
+
 export const BENEFIT_PAYMENT_ITEM_TYPE = 'net_deduction_benefit_payment' satisfies SalaryLineItemType
 
 export function isBenefitItemType(itemType: string): itemType is BenefitItemType {
@@ -185,6 +193,39 @@ export function doubleBenefitAdjustmentWarning(entries: readonly string[]): stri
     'Ett bruttolöneavdrag med samma belopp ser ut att justera samma förmån en gång till, och då blir skatten och arbetsgivaravgifterna för låga. ' +
     'Ta bort raden och räkna om, om den inte är ett verkligt bruttolöneavdrag: ' +
     `${entries.join('; ')}.`
+  )
+}
+
+/**
+ * Why a declaration must not be built from this payslip, or null.
+ *
+ * The AGI and the KU take the förmånsvärde from the payslip ROWS, resolved
+ * fresh, but the tax withheld and the avgifter underlag from the TOTALS stored
+ * at calculation time. A payslip last calculated before the reduction existed
+ * stores the unreduced förmånsvärde, so the document would declare a benefit
+ * that disagrees with the tax actually withheld. One helper for both, so the
+ * two documents cannot drift into different rules.
+ *
+ * Only a payslip with a reduction can differ, so no historical run without a
+ * benefit payment is ever touched.
+ */
+export function staleBenefitTotalRefusal(args: {
+  who: string
+  periodYear: number
+  periodMonth: number
+  document: 'arbetsgivardeklarationen' | 'kontrolluppgiften'
+  storedBenefitValues: number | null | undefined
+  benefits: TaxableBenefits
+}): string | null {
+  const { benefits, storedBenefitValues } = args
+  if (benefits.reduction <= 0) return null
+  if (typeof storedBenefitValues !== 'number') return null
+  if (ore(storedBenefitValues) === ore(benefits.taxableTotal)) return null
+  const period = `${args.periodYear}-${String(args.periodMonth).padStart(2, '0')}`
+  return (
+    `${args.who}, ${period}: lönebeskedet har ett nettolöneavdrag för förmån men är beräknat innan förmånsvärdet sattes ned med betalningen, ` +
+    'så avdragen skatt och underlag stämmer inte med förmånsvärdet. ' +
+    `Räkna om lönekörningen (Tillbaka till utkast) eller, om den är bokförd, korrigera den (Korrigera lönekörning) innan ${args.document} skapas.`
   )
 }
 
