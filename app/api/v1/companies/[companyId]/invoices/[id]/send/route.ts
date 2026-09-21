@@ -697,9 +697,15 @@ export const POST = withApiV1<{ params: Promise<{ companyId: string; id: string 
     // miss would leave the DB in 'draft' while the response claims 'sent'
     // and the email is already gone.
     let statusFlipped = true
+    // Persist moms_ruta too — exempt drafts may have been coerced to box
+    // 42 in memory above; without writing it, the row stays NULL.
     const { data: flipRows, error: statusErr } = await ctx.supabase
       .from('invoices')
-      .update({ status: 'sent', updated_at: new Date().toISOString() })
+      .update({
+        status: 'sent',
+        moms_ruta: typed.moms_ruta,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', invoiceId)
       .eq('company_id', ctx.companyId!)
       .eq('status', 'draft')

@@ -299,9 +299,15 @@ export const POST = withApiV1<{ params: Promise<{ companyId: string; id: string 
 
     // Step 2: flip status to 'sent'. Guard with status='draft' so a
     // concurrent transition becomes a 409 rather than a silent re-flip.
+    // Persist moms_ruta too — exempt drafts may have been coerced to box
+    // 42 in memory above; without writing it, the row stays NULL.
     const { data: updated, error: statusErr } = await ctx.supabase
       .from('invoices')
-      .update({ status: 'sent', updated_at: new Date().toISOString() })
+      .update({
+        status: 'sent',
+        moms_ruta: typed.moms_ruta,
+        updated_at: new Date().toISOString(),
+      })
       .eq('company_id', ctx.companyId!)
       .eq('id', invoiceId)
       .eq('status', 'draft')
