@@ -3,6 +3,7 @@ import { ensureInitialized } from '@/lib/init'
 import { withRouteContext } from '@/lib/api/with-route-context'
 import { generateKU10Xml } from '@/lib/salary/ku/ku10-generator'
 import type { KU10EmployeeData, KU10CompanyData } from '@/lib/salary/ku/ku10-generator'
+import { resolveTaxableBenefits } from '@/lib/salary/benefit-payments'
 import { getErrorMessage as getUserErrorMessage } from '@/lib/errors/get-error-message'
 
 ensureInitialized()
@@ -106,6 +107,29 @@ export const GET = withRouteContext<{ params: Promise<{ year: string }> }>(
         else if (li.item_type === 'benefit_housing') current.benefitHousing += li.amount
         else if (li.item_type === 'benefit_meals') current.benefitMeals += li.amount
         else if (['benefit_wellness', 'benefit_other'].includes(li.item_type)) current.benefitOther += li.amount
+      }
+
+      // The kontrolluppgift carries the same förmånsvärde the payslip was
+      // taxed on: the value after what the employee paid for the benefit
+      // (lib/salary/benefit-payments.ts). The reduction is per payslip, so it
+      // is taken off here, before the year is summed.
+      const resolution = resolveTaxableBenefits(
+        lineItems.map((li) => ({ itemType: li.item_type, amount: li.amount })),
+      )
+      if (!resolution.ok) {
+        return NextResponse.json(
+          { error: `Anställd ${emp.specification_number}: ${resolution.error}` },
+          { status: 422 },
+        )
+      }
+      const { reduction, reducedType } = resolution.benefits
+      if (reduction > 0) {
+        if (reducedType === 'benefit_car') current.benefitCar -= reduction
+        else if (reducedType === 'benefit_housing') current.benefitHousing -= reduction
+        else if (reducedType === 'benefit_meals') current.benefitMeals -= reduction
+        else if (reducedType === 'benefit_wellness' || reducedType === 'benefit_other') current.benefitOther -= reduction
+        // benefit_bike is not summed into any KU bucket above, so there is
+        // nothing to take the reduction from.
       }
 
       byEmployee.set(sre.employee_id, current)
