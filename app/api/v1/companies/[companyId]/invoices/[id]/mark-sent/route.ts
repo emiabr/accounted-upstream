@@ -196,24 +196,29 @@ export const POST = withApiV1<{ params: Promise<{ companyId: string; id: string 
       })
     }
 
-    // Defense in depth: moms_ruta drives which output-VAT account the
-    // journal-entry generator posts to (2611 / 2614 / etc.). A null value
-    // would silently default: wrong for reverse-charge / EU-service /
-    // zero-rated invoices. moms_ruta is populated by the POST handler
-    // from getVatRules(); a null here means the row was created via a
-    // path that bypassed v1 (legacy import, manual SQL).
+    // Defense in depth: moms_ruta documents which momsdeklaration box the
+    // sale belongs in. Booking itself keys off vat_treatment (revenue
+    // 3001/3004/…), but reverse-charge / export / zero-rated drafts must
+    // still carry an explicit ruta. Non-VAT (exempt) drafts historically
+    // persisted moms_ruta=null when vat_registered=false; treat those as
+    // box 42 (Övrig försäljning / momsfri) so :mark-sent works over REST
+    // without a dashboard bridge.
     if (!typed.moms_ruta) {
-      ctx.log.warn('invoices.mark-sent: missing moms_ruta', {
-        invoiceId,
-        companyId: ctx.companyId,
-      })
-      return v1ErrorResponseFromCode('VALIDATION_ERROR', ctx.log, {
-        requestId: ctx.requestId,
-        details: {
-          field: 'moms_ruta',
-          message: 'Invoice has no moms_ruta set. The customer\'s VAT rule must be applied (re-create the draft via POST /invoices).',
-        },
-      })
+      if (typed.vat_treatment === 'exempt') {
+        typed.moms_ruta = '42'
+      } else {
+        ctx.log.warn('invoices.mark-sent: missing moms_ruta', {
+          invoiceId,
+          companyId: ctx.companyId,
+        })
+        return v1ErrorResponseFromCode('VALIDATION_ERROR', ctx.log, {
+          requestId: ctx.requestId,
+          details: {
+            field: 'moms_ruta',
+            message: 'Invoice has no moms_ruta set. The customer\'s VAT rule must be applied (re-create the draft via POST /invoices).',
+          },
+        })
+      }
     }
 
     // Fetch company settings before number allocation. Besides the accounting

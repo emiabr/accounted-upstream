@@ -335,11 +335,11 @@ describe('POST /api/v1/companies/:companyId/invoices/:id/mark-sent', () => {
     expect(body.error.details.field).toBe('credited_invoice_id')
   })
 
-  it('rejects invoices with missing moms_ruta', async () => {
+  it('rejects invoices with missing moms_ruta when not exempt', async () => {
     mockServiceClient.mockReturnValue(
       makeFlexibleSupabase({
         company_members: { data: { company_id: COMPANY_ID, role: 'owner' }, error: null },
-        invoices: { data: { ...DRAFT_INVOICE, moms_ruta: null }, error: null },
+        invoices: { data: { ...DRAFT_INVOICE, moms_ruta: null, vat_treatment: 'standard_25' }, error: null },
       }),
     )
 
@@ -354,6 +354,31 @@ describe('POST /api/v1/companies/:companyId/invoices/:id/mark-sent', () => {
     const body = await res.json()
     expect(body.error.code).toBe('VALIDATION_ERROR')
     expect(body.error.details.field).toBe('moms_ruta')
+  })
+
+  it('coerces null moms_ruta to box 42 for exempt (non-VAT) drafts', async () => {
+    mockServiceClient.mockReturnValue(
+      makeFlexibleSupabase({
+        company_members: { data: { company_id: COMPANY_ID, role: 'owner' }, error: null },
+        invoices: [
+          { data: { ...DRAFT_INVOICE, moms_ruta: null, vat_treatment: 'exempt', vat_rate: 0, vat_amount: 0 }, error: null },
+          { data: { ...SENT_INVOICE, moms_ruta: '42', vat_treatment: 'exempt', vat_rate: 0, vat_amount: 0 }, error: null },
+        ],
+        company_settings: {
+          data: { accounting_method: 'cash', entity_type: 'enskild_firma', bankgiro: '123-4567', vat_registered: false },
+          error: null,
+        },
+      }),
+    )
+
+    const res = await markSent(
+      makeMarkSentRequest(
+        `https://x.test/api/v1/companies/${COMPANY_ID}/invoices/${INVOICE_ID}/mark-sent`,
+      ),
+      detailParams(COMPANY_ID, INVOICE_ID),
+    )
+
+    expect(res.status).toBe(200)
   })
 
   it('surfaces a warning in the response when journal entry creation fails', async () => {

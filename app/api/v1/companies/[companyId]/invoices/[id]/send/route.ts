@@ -307,13 +307,17 @@ export const POST = withApiV1<{ params: Promise<{ companyId: string; id: string 
     }
 
     if (!typed.moms_ruta) {
-      return v1ErrorResponseFromCode('VALIDATION_ERROR', ctx.log, {
-        requestId: ctx.requestId,
-        details: {
-          field: 'moms_ruta',
-          message: 'Invoice has no moms_ruta set; re-create the draft via POST /invoices.',
-        },
-      })
+      if (typed.vat_treatment === 'exempt') {
+        typed.moms_ruta = '42'
+      } else {
+        return v1ErrorResponseFromCode('VALIDATION_ERROR', ctx.log, {
+          requestId: ctx.requestId,
+          details: {
+            field: 'moms_ruta',
+            message: 'Invoice has no moms_ruta set; re-create the draft via POST /invoices.',
+          },
+        })
+      }
     }
 
     // Step 2: customer email.

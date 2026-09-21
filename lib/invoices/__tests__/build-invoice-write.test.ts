@@ -121,6 +121,7 @@ describe('buildInvoiceWriteData', () => {
     expect(result.invoiceFields.vat_amount).toBe(0)
     expect(result.invoiceFields.total).toBe(1000)
     expect(result.invoiceFields.vat_treatment).toBe('exempt')
+    expect(result.invoiceFields.moms_ruta).toBe('42')
     expect(result.items[0].vat_rate).toBe(0)
   })
 
