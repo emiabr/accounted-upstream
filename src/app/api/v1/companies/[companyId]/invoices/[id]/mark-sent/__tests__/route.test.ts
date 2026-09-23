@@ -342,13 +342,26 @@ describe('POST /api/v1/companies/:companyId/invoices/:id/mark-sent', () => {
     expect(body.error.details.field).toBe('credited_invoice_id')
   })
 
-  it('rejects invoices with missing moms_ruta when not exempt', async () => {
-    mockServiceClient.mockReturnValue(
-      makeFlexibleSupabase({
-        company_members: { data: { company_id: COMPANY_ID, role: 'owner' }, error: null },
-        invoices: { data: { ...DRAFT_INVOICE, moms_ruta: null, vat_treatment: 'standard_25' }, error: null },
-      }),
-    )
+  it.each([
+    ['VAT-registered seller, standard treatment', 'standard_25', true],
+    ['VAT-registered seller, exempt treatment', 'exempt', true],
+    ['non-registered seller, non-exempt treatment', 'standard_25', false],
+  ])('rejects a null moms_ruta: %s', async (_label, vatTreatment, vatRegistered) => {
+    const supabase = makeFlexibleSupabase({
+      company_members: { data: { company_id: COMPANY_ID, role: 'owner' }, error: null },
+      invoices: { data: { ...DRAFT_INVOICE, moms_ruta: null, vat_treatment: vatTreatment }, error: null },
+      company_settings: {
+        data: {
+          accounting_method: 'accrual',
+          entity_type: 'enskild_firma',
+          bankgiro: '123-4567',
+          vat_registered: vatRegistered,
+          vat_number: 'SE556677889901',
+        },
+        error: null,
+      },
+    })
+    mockServiceClient.mockReturnValue(supabase)
 
     const res = await markSent(
       makeMarkSentRequest(
@@ -361,17 +374,28 @@ describe('POST /api/v1/companies/:companyId/invoices/:id/mark-sent', () => {
     const body = await res.json()
     expect(body.error.code).toBe('VALIDATION_ERROR')
     expect(body.error.details.field).toBe('moms_ruta')
+    expect(supabase.captured.updates.invoices).toBeUndefined()
+    expect(mockCreateJournalEntry).not.toHaveBeenCalled()
   })
 
-  it('coerces null moms_ruta to box 42 for exempt (non-VAT) drafts', async () => {
+  it('accepts a null moms_ruta for an exempt invoice from a non-VAT-registered seller', async () => {
+    const exemptDraft = {
+      ...DRAFT_INVOICE,
+      moms_ruta: null,
+      vat_treatment: 'exempt',
+      vat_rate: 0,
+      vat_amount: 0,
+      total: 10000,
+      items: [{ ...DRAFT_INVOICE.items[0], vat_rate: 0, vat_amount: 0 }],
+    }
     const supabase = makeFlexibleSupabase({
       company_members: { data: { company_id: COMPANY_ID, role: 'owner' }, error: null },
       invoices: [
-        { data: { ...DRAFT_INVOICE, moms_ruta: null, vat_treatment: 'exempt', vat_rate: 0, vat_amount: 0 }, error: null },
-        { data: { ...SENT_INVOICE, moms_ruta: '42', vat_treatment: 'exempt', vat_rate: 0, vat_amount: 0 }, error: null },
+        { data: exemptDraft, error: null },
+        { data: { ...exemptDraft, status: 'sent', invoice_number: '2026-0042' }, error: null },
       ],
       company_settings: {
-        data: { accounting_method: 'cash', entity_type: 'enskild_firma', bankgiro: '123-4567', vat_registered: false },
+        data: { accounting_method: 'accrual', entity_type: 'enskild_firma', bankgiro: '123-4567', vat_registered: false },
         error: null,
       },
     })
@@ -385,9 +409,13 @@ describe('POST /api/v1/companies/:companyId/invoices/:id/mark-sent', () => {
     )
 
     expect(res.status).toBe(200)
-    const invoiceUpdates = supabase.captured.updates.invoices ?? []
+    const body = await res.json()
+    expect(body.data.status).toBe('sent')
+    expect(body.data.moms_ruta).toBeNull()
+    // No ruta is invented: a seller that files no momsdeklaration has none.
+    const invoiceUpdates = (supabase.captured.updates.invoices ?? []) as Array<Record<string, unknown>>
     expect(invoiceUpdates.length).toBeGreaterThan(0)
-    expect(invoiceUpdates[0]).toMatchObject({ status: 'sent', moms_ruta: '42' })
+    for (const update of invoiceUpdates) expect(update).not.toHaveProperty('moms_ruta')
   })
 
   it('surfaces a warning in the response when journal entry creation fails', async () => {

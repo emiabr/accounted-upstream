@@ -1020,7 +1020,7 @@ describe('executeRecurringSchedule VAT registration gate (issue #1719)', () => {
       total: 10500,
       vat_treatment: 'exempt',
       vat_rate: 0,
-      moms_ruta: '42',
+      moms_ruta: null,
       reverse_charge_text: null,
     })
 

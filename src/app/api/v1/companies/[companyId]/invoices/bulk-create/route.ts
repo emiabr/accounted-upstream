@@ -383,7 +383,7 @@ async function createOneInvoice(
       // reverse-charge notation); every line rate is already zeroed above.
       vat_treatment: notVatRegistered ? 'exempt' : vatRules.treatment,
       vat_rate: headerVatRate,
-      moms_ruta: notVatRegistered ? '42' : vatRules.momsRuta,
+      moms_ruta: notVatRegistered ? null : vatRules.momsRuta,
       reverse_charge_text: notVatRegistered ? null : (vatRules.reverseChargeText || null),
       your_reference: input.your_reference,
       our_reference: input.our_reference,

@@ -628,10 +628,7 @@ export async function buildInvoiceWriteData(params: {
     remaining_amount: documentType === 'invoice' ? total - deductionTotal : 0,
     vat_treatment: notVatRegistered ? 'exempt' : headerRules.treatment,
     vat_rate: documentType === 'delivery_note' ? 0 : (isMixedRate ? null : (uniqueRates.values().next().value ?? vatRules.rate)),
-    // Non-VAT sellers book momsfri revenue (3004/3100 → declaration box 42).
-    // Persist '42' so v1 :mark-sent / :send do not reject a null moms_ruta
-    // that the create path used to force when vat_registered=false.
-    moms_ruta: notVatRegistered ? '42' : headerRules.momsRuta,
+    moms_ruta: notVatRegistered ? null : headerRules.momsRuta,
     reverse_charge_text: notVatRegistered ? null : (headerRules.reverseChargeText || null),
     your_reference: input.your_reference,
     our_reference: input.our_reference,

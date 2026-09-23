@@ -2403,7 +2403,7 @@ async function commitCreateInvoice(
       paid_amount: 0,
       vat_treatment: notVatRegistered ? 'exempt' : vatRules.treatment,
       vat_rate: isMixedRate ? null : (uniqueRates.values().next().value ?? vatRules.rate),
-      moms_ruta: notVatRegistered ? '42' : vatRules.momsRuta,
+      moms_ruta: notVatRegistered ? null : vatRules.momsRuta,
       reverse_charge_text: notVatRegistered ? null : (vatRules.reverseChargeText || null),
       our_reference: (params.our_reference as string) || null,
       your_reference: (params.your_reference as string) || null,

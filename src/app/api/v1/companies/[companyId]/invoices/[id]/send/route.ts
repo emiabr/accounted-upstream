@@ -82,6 +82,7 @@ import {
   invoiceRequiresPaymentAccount,
 } from '@/lib/invoices/payment-accounts'
 import { hasRequiredSellerVatNumber } from '@/lib/invoices/seller-vat-number'
+import { hasRequiredMomsRuta } from '@/lib/invoices/moms-ruta-gate'
 import { eventBus } from '@/lib/events'
 import { guardSandbox } from '@/lib/sandbox/guard'
 import { requireCapability } from '@/lib/entitlements/has-capability'
@@ -306,20 +307,6 @@ export const POST = withApiV1<{ params: Promise<{ companyId: string; id: string 
       })
     }
 
-    if (!typed.moms_ruta) {
-      if (typed.vat_treatment === 'exempt') {
-        typed.moms_ruta = '42'
-      } else {
-        return v1ErrorResponseFromCode('VALIDATION_ERROR', ctx.log, {
-          requestId: ctx.requestId,
-          details: {
-            field: 'moms_ruta',
-            message: 'Invoice has no moms_ruta set; re-create the draft via POST /invoices.',
-          },
-        })
-      }
-    }
-
     // Step 2: customer email.
     const customer = typed.customer
     if (!customer?.email?.trim() || !EMAIL_PATTERN.test(customer.email.trim())) {
@@ -347,6 +334,17 @@ export const POST = withApiV1<{ params: Promise<{ companyId: string; id: string 
       })
     }
     const settings = company as CompanySettings & { accounting_method?: string }
+    // A null moms_ruta is only legitimate for a seller that is not
+    // VAT-registered issuing an exempt invoice (see hasRequiredMomsRuta).
+    if (!hasRequiredMomsRuta(settings, typed)) {
+      return v1ErrorResponseFromCode('VALIDATION_ERROR', ctx.log, {
+        requestId: ctx.requestId,
+        details: {
+          field: 'moms_ruta',
+          message: 'Invoice has no moms_ruta set; re-create the draft via POST /invoices.',
+        },
+      })
+    }
     const paymentAccountRequired = invoiceRequiresPaymentAccount(typed)
     // Freeze the chosen bank account's payee at issue (no-op without a choice).
     const payeeSnapshot = await snapshotInvoicePayee(ctx.supabase, ctx.companyId!, typed, { persist: !ctx.dryRun })
@@ -697,15 +695,9 @@ export const POST = withApiV1<{ params: Promise<{ companyId: string; id: string 
     // miss would leave the DB in 'draft' while the response claims 'sent'
     // and the email is already gone.
     let statusFlipped = true
-    // Persist moms_ruta too — exempt drafts may have been coerced to box
-    // 42 in memory above; without writing it, the row stays NULL.
     const { data: flipRows, error: statusErr } = await ctx.supabase
       .from('invoices')
-      .update({
-        status: 'sent',
-        moms_ruta: typed.moms_ruta,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ status: 'sent', updated_at: new Date().toISOString() })
       .eq('id', invoiceId)
       .eq('company_id', ctx.companyId!)
       .eq('status', 'draft')

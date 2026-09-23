@@ -129,7 +129,7 @@ describe('commitPendingOperation: create_invoice', () => {
       total: 1000,
       vat_rate: 0,
       vat_treatment: 'exempt',
-      moms_ruta: '42',
+      moms_ruta: null,
     })
     const itemRows = inserts['invoice_items'][0] as Array<Record<string, unknown>>
     expect(itemRows).toHaveLength(1)

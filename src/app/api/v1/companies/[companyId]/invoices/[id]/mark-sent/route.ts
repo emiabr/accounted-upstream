@@ -54,6 +54,7 @@ import {
 } from '@/lib/invoices/payment-accounts'
 import { snapshotInvoicePayee } from '@/lib/invoices/invoice-payee'
 import { hasRequiredSellerVatNumber } from '@/lib/invoices/seller-vat-number'
+import { hasRequiredMomsRuta } from '@/lib/invoices/moms-ruta-gate'
 import { eventBus } from '@/lib/events'
 import type { CompanySettings, EntityType, Invoice } from '@/types'
 
@@ -196,31 +197,6 @@ export const POST = withApiV1<{ params: Promise<{ companyId: string; id: string 
       })
     }
 
-    // Defense in depth: moms_ruta documents which momsdeklaration box the
-    // sale belongs in. Booking itself keys off vat_treatment (revenue
-    // 3001/3004/…), but reverse-charge / export / zero-rated drafts must
-    // still carry an explicit ruta. Non-VAT (exempt) drafts historically
-    // persisted moms_ruta=null when vat_registered=false; treat those as
-    // box 42 (Övrig försäljning / momsfri) so :mark-sent works over REST
-    // without a dashboard bridge.
-    if (!typed.moms_ruta) {
-      if (typed.vat_treatment === 'exempt') {
-        typed.moms_ruta = '42'
-      } else {
-        ctx.log.warn('invoices.mark-sent: missing moms_ruta', {
-          invoiceId,
-          companyId: ctx.companyId,
-        })
-        return v1ErrorResponseFromCode('VALIDATION_ERROR', ctx.log, {
-          requestId: ctx.requestId,
-          details: {
-            field: 'moms_ruta',
-            message: 'Invoice has no moms_ruta set. The customer\'s VAT rule must be applied (re-create the draft via POST /invoices).',
-          },
-        })
-      }
-    }
-
     // Fetch company settings before number allocation. Besides the accounting
     // decision, payable invoices need a currency-matching account.
     const { data: settings, error: settingsError } = await ctx.supabase
@@ -240,6 +216,25 @@ export const POST = withApiV1<{ params: Promise<{ companyId: string; id: string 
       })
     }
     const companySettings = settings as CompanySettings
+
+    // Defense in depth: moms_ruta records which momsdeklaration box the sale
+    // belongs in. A null is only legitimate for a seller that is not
+    // VAT-registered issuing an exempt invoice (no momsdeklaration, so no
+    // ruta); any other null means the row bypassed the create paths (legacy
+    // import, manual SQL) and its VAT rule was never applied.
+    if (!hasRequiredMomsRuta(companySettings, typed)) {
+      ctx.log.warn('invoices.mark-sent: missing moms_ruta', {
+        invoiceId,
+        companyId: ctx.companyId,
+      })
+      return v1ErrorResponseFromCode('VALIDATION_ERROR', ctx.log, {
+        requestId: ctx.requestId,
+        details: {
+          field: 'moms_ruta',
+          message: 'Invoice has no moms_ruta set. The customer\'s VAT rule must be applied (re-create the draft via POST /invoices).',
+        },
+      })
+    }
     // Freeze the chosen bank account's payee at issue (no-op without a choice).
     const payeeSnapshot = await snapshotInvoicePayee(ctx.supabase, ctx.companyId!, typed, { persist: !ctx.dryRun })
     if (!payeeSnapshot.ok) {
@@ -299,15 +294,9 @@ export const POST = withApiV1<{ params: Promise<{ companyId: string; id: string 
 
     // Step 2: flip status to 'sent'. Guard with status='draft' so a
     // concurrent transition becomes a 409 rather than a silent re-flip.
-    // Persist moms_ruta too — exempt drafts may have been coerced to box
-    // 42 in memory above; without writing it, the row stays NULL.
     const { data: updated, error: statusErr } = await ctx.supabase
       .from('invoices')
-      .update({
-        status: 'sent',
-        moms_ruta: typed.moms_ruta,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ status: 'sent', updated_at: new Date().toISOString() })
       .eq('company_id', ctx.companyId!)
       .eq('id', invoiceId)
       .eq('status', 'draft')
